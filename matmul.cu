@@ -85,6 +85,36 @@ __global__ void mm_kernel(T const* mat_1, T const* mat_2, T* mat_3, size_t m,
     mat_3[i * p + j] = acc_sum;
 }
 
+#define TILE_SIZE 32
+template <typename T>
+__global__ void mm_tiled_kernel(T const* mat_1, T const* mat_2, T* mat_3, size_t m,
+                          size_t n, size_t p)
+{
+    __shared__ T tile_mat_1[TILE_SIZE][TILE_SIZE];
+    __shared__ T tile_mat_2[TILE_SIZE][TILE_SIZE];
+
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    int row = by*blockDim.y + ty;
+    int col = bx*blockDim.x + tx;
+
+    T acc_sum{0};
+    for(int k = 0; k < n/TILE_SIZE; k++){
+        tile_mat_1[ty][tx] = mat_1[row * n + k*TILE_SIZE + tx];
+        tile_mat_2[ty][tx] = mat_2[(k*TILE_SIZE+ty)*p + col];
+        __syncthreads();
+    for(int i = 0; i < TILE_SIZE; ++i)
+        acc_sum += tile_mat_1[ty][i] * tile_mat_2[i][tx];
+    __syncthreads();
+    }
+
+    mat_3[row*p+col] = acc_sum;
+}
+
 template <typename T>
 void mm_cuda(T const* mat_1, T const* mat_2, T* mat_3, size_t m, size_t n,
              size_t p)
@@ -96,6 +126,20 @@ void mm_cuda(T const* mat_1, T const* mat_2, T* mat_3, size_t m, size_t n,
     blocks_per_grid.y = std::ceil(static_cast<double>(m) /
                                   static_cast<double>(threads_per_block.y));
     mm_kernel<<<blocks_per_grid, threads_per_block>>>(mat_1, mat_2, mat_3, m, n,
+                                                      p);
+}
+
+template <typename T>
+void mm_cuda_tiled(T const* mat_1, T const* mat_2, T* mat_3, size_t m, size_t n,
+             size_t p)
+{
+    dim3 threads_per_block(BLOCK_DIM, BLOCK_DIM);
+    dim3 blocks_per_grid(1, 1);
+    blocks_per_grid.x = std::ceil(static_cast<double>(p) /
+                                  static_cast<double>(threads_per_block.x));
+    blocks_per_grid.y = std::ceil(static_cast<double>(m) /
+                                  static_cast<double>(threads_per_block.y));
+    mm_tiled_kernel<<<blocks_per_grid, threads_per_block>>>(mat_1, mat_2, mat_3, m, n,
                                                       p);
 }
 
@@ -130,7 +174,7 @@ bool random_test_mm_cuda(size_t m, size_t n, size_t p)
     T* mat_3{mat_3_vec.data()};
     T* mat_4{mat_4_vec.data()};
 
-    //mm(mat_1, mat_2, mat_3, m, n, p);
+    mm(mat_1, mat_2, mat_3, m, n, p);
 
     T *d_mat_1, *d_mat_2, *d_mat_4;
 
@@ -146,7 +190,7 @@ bool random_test_mm_cuda(size_t m, size_t n, size_t p)
                          cudaMemcpyHostToDevice));
 
     // Run matrix multiplication on GPU.
-    mm_cuda(d_mat_1, d_mat_2, d_mat_4, m, n, p);
+    mm_cuda_tiled(d_mat_1, d_mat_2, d_mat_4, m, n, p);
     cudaDeviceSynchronize();
     cudaError_t err{cudaGetLastError()};
     if (err != cudaSuccess)
@@ -166,7 +210,9 @@ bool random_test_mm_cuda(size_t m, size_t n, size_t p)
     checkCuda(cudaFree(d_mat_2));
     checkCuda(cudaFree(d_mat_4));
 
-    return true;
+
+    return allclose<T>(mat_3_vec, mat_4_vec, 1e-4);
+
 }
 
 
