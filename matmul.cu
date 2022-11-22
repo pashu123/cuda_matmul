@@ -67,22 +67,21 @@ __global__ void mm_kernel(T const* mat_1, T const* mat_2, T* mat_3, size_t m,
 {
     // 2D block and 2D thread
     // Each thread computes one cell in mat_3.
-    size_t i{blockIdx.y * blockDim.y + threadIdx.y};
-    size_t j{blockIdx.x * blockDim.x + threadIdx.x};
+    size_t row{blockIdx.y * blockDim.y + threadIdx.y};
+    size_t col{blockIdx.x * blockDim.x + threadIdx.x};
 
     // Do not process outside the matrix.
     // Do not forget the equal sign!
-    if ((i >= m) || (j >= p))
-    {
-        return;
+    if ((row >= m) || (col >= p)) {
+      return;
     }
 
     T acc_sum{0};
     for (size_t k{0}; k < n; ++k)
     {
-        acc_sum += mat_1[i * n + k] * mat_2[k * p + j];
+      acc_sum += mat_1[row * n + k] * mat_2[k * p + col];
     }
-    mat_3[i * p + j] = acc_sum;
+    mat_3[row * p + col] = acc_sum;
 }
 
 #define TILE_SIZE 32
